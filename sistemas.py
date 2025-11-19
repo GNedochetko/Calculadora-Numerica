@@ -140,6 +140,7 @@ def gauss_com_pivo_completo(matriz_a: list[list[float]], vetor_b: list[float]) -
         linha_max = coluna_pivo
         coluna_max = coluna_pivo
 
+        #agora ele procura em todas as linhas e colunas possiveis o melhor candidato para ser o pivo
         for linha in range(coluna_pivo, ordem):
             for coluna in range(coluna_pivo, ordem):
                 valor_atual = abs(matriz[linha][coluna])
@@ -148,16 +149,20 @@ def gauss_com_pivo_completo(matriz_a: list[list[float]], vetor_b: list[float]) -
                     linha_max = linha
                     coluna_max = coluna
 
+        #troca de linhas caso necessario
         if linha_max != coluna_pivo:
             matriz[coluna_pivo], matriz[linha_max] = matriz[linha_max], matriz[coluna_pivo]
             vetor[coluna_pivo], vetor[linha_max] = vetor[linha_max], vetor[coluna_pivo]
 
+        #troca de colunas caso necessario
         if coluna_max != coluna_pivo:
             for linha in range(ordem):
+                #troca das colunas
                 matriz[linha][coluna_pivo], matriz[linha][coluna_max] = (
                     matriz[linha][coluna_max],
                     matriz[linha][coluna_pivo],
                 )
+            #troca as anotações na permutação (para desfazer depois)
             permutacao_colunas[coluna_pivo], permutacao_colunas[coluna_max] = (
                 permutacao_colunas[coluna_max],
                 permutacao_colunas[coluna_pivo],
@@ -177,6 +182,7 @@ def gauss_com_pivo_completo(matriz_a: list[list[float]], vetor_b: list[float]) -
                 matriz[linha][coluna] -= fator * matriz[coluna_pivo][coluna]
             vetor[linha] -= fator * vetor[coluna_pivo]
 
+    #faz a retrosubstituição com as soluções desordenadas
     solucoes_desordenadas = [0.0] * ordem
     for i in range(ordem - 1, -1, -1):
         pivo = matriz[i][i]
@@ -191,25 +197,28 @@ def gauss_com_pivo_completo(matriz_a: list[list[float]], vetor_b: list[float]) -
         if abs(solucoes_desordenadas[i]) < EPSILON:
             solucoes_desordenadas[i] = 0.0
 
+    #por fim constroi as funções ordenadas para exibir corretamente na tela
     solucoes = [0.0] * ordem
     for indice_atual, indice_original in enumerate(permutacao_colunas):
         solucoes[indice_original] = solucoes_desordenadas[indice_atual]
 
     return solucoes
 
-
+#calcula pelo metodo de fatoração LU
 def fatoracao_LU(matriz_a: list[list[float]], vetor_b: list[float]) -> list[float]:
     matriz = _copiar_matriz(matriz_a)
     vetor = _copiar_vetor(vetor_b)
     ordem = len(vetor)
 
+    #primeiro confere se da pra calcular por LU, determinanente não pode ser 0
     if determinante(matriz, ordem) == 0.0:
         raise ValueError("O determinante da matriz A é 0, portanto não se pode aplicar fatoração LU.")
 
-    L = [[0.0] * ordem for _ in range(ordem)]
-    U = _copiar_matriz(matriz)
+    L = [[0.0] * ordem for _ in range(ordem)] #L inicia zerada
+    U = _copiar_matriz(matriz) #U inicia com as entradas
+    #coloca 1 na diagonal principal da L
     for i in range(ordem):
-        L[i][i] = 1.0
+        L[i][i] = 1.0 
 
     for k in range(ordem):
         pivo = U[k][k]
@@ -289,3 +298,86 @@ def cholesky(matriz_a: list[list[float]], vetor_b: list[float]) -> list[float]:
         solucoes[i] = 0.0 if abs(valor) < EPSILON else valor
 
     return solucoes
+
+
+def _validar_sistema_iterativo(matriz_a: list[list[float]], vetor_b: list[float]) -> int:
+    ordem = len(vetor_b)
+    if ordem == 0:
+        raise ValueError("O sistema precisa ter pelo menos uma equação.")
+    if len(matriz_a) != ordem:
+        raise ValueError("A matriz A deve ter o mesmo número de linhas que o tamanho de b.")
+    for i, linha in enumerate(matriz_a):
+        if len(linha) != ordem:
+            raise ValueError(f"A linha {i + 1} da matriz A não possui {ordem} elementos.")
+    return ordem
+
+
+def _calcular_erro_iterativo(
+    anterior: list[float],
+    atual: list[float],
+    condicao_parada: str,
+) -> float:
+    diferencas = [abs(a - b) for a, b in zip(atual, anterior)]
+    if condicao_parada == "erro_relativo":
+        erros_relativos = [
+            diferenca / (abs(atual_valor) if abs(atual_valor) > EPSILON else 1.0)
+            for diferenca, atual_valor in zip(diferencas, atual)
+        ]
+        return max(erros_relativos)
+    return max(diferencas)
+
+
+def gauss_jacobi(
+    matriz_a: list[list[float]],
+    vetor_b: list[float],
+    tolerancia: float,
+    max_iteracoes: int,
+    condicao_parada: str,
+) -> tuple[list[float], int]:
+    ordem = _validar_sistema_iterativo(matriz_a, vetor_b)
+    aproximacao_atual = [0.0] * ordem
+
+    for iteracao in range(1, max_iteracoes + 1):
+        proxima_aproximacao = [0.0] * ordem
+        for i in range(ordem):
+            pivo = matriz_a[i][i]
+            if abs(pivo) < EPSILON:
+                raise ValueError(f"O elemento diagonal A[{i + 1},{i + 1}] é nulo; não é possível aplicar Jacobi.")
+            soma = sum(matriz_a[i][j] * aproximacao_atual[j] for j in range(ordem) if j != i)
+            proxima_aproximacao[i] = (vetor_b[i] - soma) / pivo
+
+        erro = _calcular_erro_iterativo(aproximacao_atual, proxima_aproximacao, condicao_parada)
+        aproximacao_atual = proxima_aproximacao
+        if erro <= tolerancia:
+            return aproximacao_atual, iteracao
+
+    raise ValueError("Número máximo de iterações atingido no método de Jacobi sem atingir a tolerância desejada.")
+
+
+def gauss_seidel(
+    matriz_a: list[list[float]],
+    vetor_b: list[float],
+    tolerancia: float,
+    max_iteracoes: int,
+    condicao_parada: str,
+) -> tuple[list[float], int]:
+    ordem = _validar_sistema_iterativo(matriz_a, vetor_b)
+    aproximacao_atual = [0.0] * ordem
+
+    for iteracao in range(1, max_iteracoes + 1):
+        anterior = aproximacao_atual[:]
+        for i in range(ordem):
+            pivo = matriz_a[i][i]
+            if abs(pivo) < EPSILON:
+                raise ValueError(f"O elemento diagonal A[{i + 1},{i + 1}] é nulo; não é possível aplicar Gauss-Seidel.")
+            soma = 0.0
+            for j in range(ordem):
+                if j != i:
+                    soma += matriz_a[i][j] * aproximacao_atual[j]
+            aproximacao_atual[i] = (vetor_b[i] - soma) / pivo
+
+        erro = _calcular_erro_iterativo(anterior, aproximacao_atual, condicao_parada)
+        if erro <= tolerancia:
+            return aproximacao_atual, iteracao
+
+    raise ValueError("Número máximo de iterações atingido no método de Gauss-Seidel sem atingir a tolerância desejada.")

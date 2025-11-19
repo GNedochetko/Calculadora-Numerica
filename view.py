@@ -3,15 +3,18 @@ from __future__ import annotations
 import subprocess
 import time
 import tkinter as tk
+from dataclasses import dataclass
 from tkinter import messagebox
 from typing import Callable
 
 from sistemas import (
+    cholesky,
     fatoracao_LU,
     gauss_com_pivo_completo,
     gauss_com_pivo_parcial,
+    gauss_jacobi,
+    gauss_seidel,
     gauss_sem_pivo,
-    cholesky,
 )
 
 ZERO_FUNC_FIELDS = [
@@ -30,6 +33,27 @@ METODOS_SISTEMA: dict[str, Callable[[list[list[float]], list[float]], list[float
     "Fatoração LU": fatoracao_LU,
     "Fatoração de Cholesky": cholesky
 }
+
+METODOS_ITERATIVOS_FUNCOES = {
+    "Método iterativo de Gauss Jacobi": gauss_jacobi,
+    "Método iterativo de Gauss Seidel": gauss_seidel,
+}
+METODOS_ITERATIVOS = tuple(METODOS_ITERATIVOS_FUNCOES)
+
+METODOS_DISPONIVEIS = list(METODOS_SISTEMA) + list(METODOS_ITERATIVOS_FUNCOES)
+
+CONDICOES_PARADA = [
+    ("Erro absoluto", "erro_absoluto"),
+    ("Erro relativo", "erro_relativo"),
+]
+CONDICOES_PARADA_VALORES = {valor for _, valor in CONDICOES_PARADA}
+
+
+@dataclass
+class CamposIterativos:
+    tolerancia: tk.Entry
+    iteracoes: tk.Entry
+    condicao_parada: tk.StringVar
 
 
 def limpar_container(container: tk.Misc) -> None:
@@ -131,17 +155,8 @@ def show_tela_ordem(container: tk.Misc) -> None:
     entry_ordem.focus_set()
 
     tk.Label(container, text="Qual método você quer usar?", font=("Arial", 14, "bold")).pack(pady=(20, 10))
-    sistemas = [
-        "Eliminação de Gauss (Gauss sem pivoteamento)",
-        "Pivoteamento parcial (Gauss com pivoteamento parcial)",
-        "Pivoteamento completo (Gauss com pivoteamento completo)",
-        "Fatoração LU",
-        "Fatoração de Cholesky",
-        "Método iterativo de Gauss Jacobi",
-        "Método iterativo de Gauss Seidel",
-    ]
-    sistema_var = tk.StringVar(value=sistemas[0])
-    tk.OptionMenu(container, sistema_var, *sistemas).pack(padx=10, pady=15)
+    sistema_var = tk.StringVar(value=METODOS_DISPONIVEIS[0])
+    tk.OptionMenu(container, sistema_var, *METODOS_DISPONIVEIS).pack(padx=10, pady=15)
 
     def avancar() -> None:
         try:
@@ -192,13 +207,54 @@ def show_tela_sistema(container: tk.Misc, ordem: int, metodo: str) -> None:
         entry.grid(row=i, column=0, padx=5, pady=5)
         entradas_b.append(entry)
 
+    campos_iterativos: CamposIterativos | None = None
+    if metodo in METODOS_ITERATIVOS:
+        iterativo_frame = tk.LabelFrame(container, text="Parâmetros do método iterativo")
+        iterativo_frame.pack(fill="x", padx=30, pady=(5, 0))
+
+        tk.Label(iterativo_frame, text="Tolerância:", anchor="w").grid(row=0, column=0, sticky="w", padx=10, pady=5)
+        entrada_tolerancia = tk.Entry(iterativo_frame, width=12, justify="center")
+        entrada_tolerancia.grid(row=0, column=1, padx=10, pady=5, sticky="w")
+
+        tk.Label(iterativo_frame, text="Número máximo de iterações:", anchor="w").grid(
+            row=1,
+            column=0,
+            sticky="w",
+            padx=10,
+            pady=5,
+        )
+        entrada_iteracoes = tk.Entry(iterativo_frame, width=12, justify="center")
+        entrada_iteracoes.grid(row=1, column=1, padx=10, pady=5, sticky="w")
+
+        condicao_var = tk.StringVar(value=CONDICOES_PARADA[0][1])
+        tk.Label(iterativo_frame, text="Condição de parada:", anchor="w").grid(
+            row=2,
+            column=0,
+            sticky="w",
+            padx=10,
+            pady=5,
+        )
+        for idx, (titulo, valor) in enumerate(CONDICOES_PARADA):
+            tk.Radiobutton(
+                iterativo_frame,
+                text=titulo,
+                variable=condicao_var,
+                value=valor,
+            ).grid(row=2, column=1 + idx, sticky="w", padx=5, pady=5)
+
+        campos_iterativos = CamposIterativos(
+            tolerancia=entrada_tolerancia,
+            iteracoes=entrada_iteracoes,
+            condicao_parada=condicao_var,
+        )
+
     botoes_frame = tk.Frame(container)
     botoes_frame.pack(pady=10)
 
     tk.Button(
         botoes_frame,
         text="Calcular",
-        command=lambda: calcula_sistema(container, entradas_a, entradas_b, metodo),
+        command=lambda: calcula_sistema(container, entradas_a, entradas_b, metodo, campos_iterativos),
     ).pack(pady=(0, 10))
     tk.Button(
         botoes_frame,
@@ -237,14 +293,55 @@ def _extrair_dados_sistema(
     return matriz, vetor
 
 
+def _extrair_parametros_iterativos(campos: CamposIterativos) -> tuple[float, int, str]:
+    tolerancia_bruta = campos.tolerancia.get().strip()
+    if not tolerancia_bruta:
+        raise ValueError("Informe a tolerância para o método iterativo.")
+    try:
+        tolerancia = float(tolerancia_bruta)
+    except ValueError as exc:
+        raise ValueError("Tolerância inválida: utilize um número real.") from exc
+    if tolerancia <= 0:
+        raise ValueError("A tolerância deve ser maior que zero.")
+
+    iteracoes_brutas = campos.iteracoes.get().strip()
+    if not iteracoes_brutas:
+        raise ValueError("Informe o número máximo de iterações.")
+    try:
+        iteracoes = int(iteracoes_brutas)
+    except ValueError as exc:
+        raise ValueError("Número máximo de iterações inválido: utilize um inteiro.") from exc
+    if iteracoes <= 0:
+        raise ValueError("O número máximo de iterações deve ser maior que zero.")
+
+    condicao_escolhida = campos.condicao_parada.get()
+    if condicao_escolhida not in CONDICOES_PARADA_VALORES:
+        raise ValueError("Selecione uma condição de parada.")
+
+    return tolerancia, iteracoes, condicao_escolhida
+
+
 def calcula_sistema(
     container: tk.Misc,
     entradas_a: list[list[tk.Entry]],
     entradas_b: list[tk.Entry],
     metodo: str,
+    campos_iterativos: CamposIterativos | None = None,
 ) -> None:
-    funcao = METODOS_SISTEMA.get(metodo)
-    if funcao is None:
+    funcao_iterativa = METODOS_ITERATIVOS_FUNCOES.get(metodo)
+    funcao_direta = METODOS_SISTEMA.get(metodo)
+
+    parametros_iterativos: tuple[float, int, str] | None = None
+    if funcao_iterativa is not None:
+        if campos_iterativos is None:
+            messagebox.showerror("Erro", "Preencha os parâmetros do método iterativo.")
+            return
+        try:
+            parametros_iterativos = _extrair_parametros_iterativos(campos_iterativos)
+        except ValueError as exc:
+            messagebox.showerror("Erro", str(exc))
+            return
+    elif funcao_direta is None:
         messagebox.showinfo("Aviso", f"O método \"{metodo}\" ainda não está disponível.")
         return
 
@@ -255,8 +352,23 @@ def calcula_sistema(
         return
 
     inicio = time.perf_counter()
+    resultado: list[float] | None = None
+    iteracoes_realizadas: int | None = None
+
     try:
-        resultado = funcao(matriz_a, vetor_b)
+        if funcao_iterativa is not None and parametros_iterativos is not None:
+            tolerancia, iteracoes, condicao_parada = parametros_iterativos
+            resultado, iteracoes_realizadas = funcao_iterativa(
+                matriz_a,
+                vetor_b,
+                tolerancia,
+                iteracoes,
+                condicao_parada,
+            )
+        elif funcao_direta is not None:
+            resultado = funcao_direta(matriz_a, vetor_b)
+        else:
+            raise NotImplementedError(f"O método \"{metodo}\" ainda não está disponível.")
     except NotImplementedError as exc:
         messagebox.showinfo("Aviso", str(exc))
         return
@@ -269,6 +381,8 @@ def calcula_sistema(
     duracao = time.perf_counter() - inicio
 
     linhas_resultado = [f"x{i + 1} = {valor:.6g}" for i, valor in enumerate(resultado)]
+    if iteracoes_realizadas is not None:
+        linhas_resultado.append(f"Iterações: {iteracoes_realizadas}")
     linhas_resultado.append(f"Tempo: {duracao * 1000:.3f} ms")
     messagebox.showinfo("Resultado", "\n".join(linhas_resultado))
     show_tela_inicial(container)
